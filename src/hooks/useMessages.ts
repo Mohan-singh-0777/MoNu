@@ -5,29 +5,31 @@ import { useAuth } from "@/context/AuthContext";
 
 export function useMessages(conversationId: string | null) {
   const { user } = useAuth();
+
   const [messages, setMessages] = useState<Message[]>([]);
   const [profiles, setProfiles] = useState<Map<string, Profile>>(new Map());
   const [loading, setLoading] = useState(true);
-  const [typingUserIds, setTypingUserIds] = useState<string[]>([]);
 
-  const load = useCallback(async () => {
+  const loadMessages = useCallback(async () => {
     if (!conversationId) {
       setMessages([]);
       setLoading(false);
       return;
     }
 
-    const { data } = await supabase
+    setLoading(true);
+
+    const { data: msgs } = await supabase
       .from("messages")
       .select("*")
       .eq("conversation_id", conversationId)
       .order("created_at", { ascending: true });
 
-    setMessages((data ?? []) as Message[]);
+    setMessages((msgs ?? []) as Message[]);
 
-    const senderIds = Array.from(new Set((data ?? []).map((m: any) => m.sender_id)));
+    const senderIds = [...new Set((msgs ?? []).map((m: any) => m.sender_id))];
 
-    if (senderIds.length) {
+    if (senderIds.length > 0) {
       const { data: ps } = await supabase
         .from("profiles")
         .select("*")
@@ -40,25 +42,59 @@ export function useMessages(conversationId: string | null) {
   }, [conversationId]);
 
   useEffect(() => {
-    load();
-  }, [load]);
+    loadMessages();
+  }, [loadMessages]);
 
   useEffect(() => {
     if (!conversationId) return;
 
     const channel = supabase
-      .channel(`messages-live-${conversationId}`)
+      .channel(`room-${conversationId}-${Math.random()}`)
 
       .on(
         "postgres_changes",
         {
-          event: "*",
+          event: "INSERT",
           schema: "public",
           table: "messages",
           filter: `conversation_id=eq.${conversationId}`,
         },
-        async () => {
-          await load();
+        async (payload) => {
+          const msg = payload.new as Message;
+
+          setMessages((prev) => {
+            if (prev.find((m) => m.id === msg.id)) return prev;
+            return [...prev, msg];
+          });
+
+          const { data } = await supabase
+            .from("profiles")
+            .select("*")
+            .eq("id", msg.sender_id)
+            .single();
+
+          if (data) {
+            setProfiles((prev) => {
+              const n = new Map(prev);
+              n.set(data.id, data as Profile);
+              return n;
+            });
+          }
+        }
+      )
+
+      .on(
+        "postgres_changes",
+        {
+          event: "DELETE",
+          schema: "public",
+          table: "messages",
+          filter: `conversation_id=eq.${conversationId}`,
+        },
+        (payload) => {
+          setMessages((prev) =>
+            prev.filter((m) => m.id !== (payload.old as any).id)
+          );
         }
       )
 
@@ -66,48 +102,45 @@ export function useMessages(conversationId: string | null) {
         console.log("REALTIME STATUS:", status);
       });
 
-    const poll = setInterval(() => {
-      load();
-    }, 2000);
-
     return () => {
       supabase.removeChannel(channel);
-      clearInterval(poll);
     };
-  }, [conversationId, load]);
+  }, [conversationId]);
 
-  const sendMessage = useCallback(async (
-    content: string,
-    attachment?: { url: string; name: string; type: "image" | "file" }
-  ) => {
-    if (!conversationId || !user) return;
+  const sendMessage = useCallback(
+    async (
+      content: string,
+      attachment?: { url: string; name: string; type: "image" | "file" }
+    ) => {
+      if (!conversationId || !user) return;
 
-    const trimmed = content.trim();
-    if (!trimmed && !attachment) return;
+      const trimmed = content.trim();
+      if (!trimmed && !attachment) return;
 
-    const { error } = await supabase.from("messages").insert({
-      conversation_id: conversationId,
-      sender_id: user.id,
-      content: trimmed || null,
-      message_type: attachment?.type ?? "text",
-      attachment_url: attachment?.url ?? null,
-      attachment_name: attachment?.name ?? null,
-    });
+      const { error } = await supabase.from("messages").insert({
+        conversation_id: conversationId,
+        sender_id: user.id,
+        content: trimmed || null,
+        message_type: attachment?.type ?? "text",
+        attachment_url: attachment?.url ?? null,
+        attachment_name: attachment?.name ?? null,
+      });
 
-    if (error) throw error;
+      if (error) throw error;
 
-    await supabase
-      .from("conversations")
-      .update({ last_message_at: new Date().toISOString() })
-      .eq("id", conversationId);
-
-    await load();
-  }, [conversationId, user, load]);
+      await supabase
+        .from("conversations")
+        .update({
+          last_message_at: new Date().toISOString(),
+        })
+        .eq("id", conversationId);
+    },
+    [conversationId, user]
+  );
 
   const deleteMessage = useCallback(async (id: string) => {
     await supabase.from("messages").delete().eq("id", id);
-    await load();
-  }, [load]);
+  }, []);
 
   const setTyping = useCallback(async () => {
     return;
@@ -120,6 +153,6 @@ export function useMessages(conversationId: string | null) {
     sendMessage,
     deleteMessage,
     setTyping,
-    typingUserIds
+    typingUserIds: [],
   };
 }
