@@ -1,139 +1,99 @@
-import { useEffect, useRef } from "react";
-import { useNavigate, useParams } from "react-router-dom";
-import { useAuth } from "@/context/AuthContext";
+import { useParams } from "react-router-dom";
 import { useMessages } from "@/hooks/useMessages";
-import { useConversations } from "@/hooks/useConversations";
-import { MessageBubble } from "./MessageBubble";
-import { MessageComposer } from "./MessageComposer";
-import { UserAvatar } from "@/components/UserAvatar";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Button } from "@/components/ui/button";
-import { ArrowLeft, Phone, Video } from "lucide-react";
-import { formatDistanceToNowStrict } from "date-fns";
-import { useCall } from "@/context/CallContext";
+import { useAuth } from "@/context/AuthContext";
+import { useEffect, useRef, useState } from "react";
+import { ImagePlus, SendHorizonal } from "lucide-react";
 
-export const ConversationView = () => {
+export function ConversationView() {
   const { id } = useParams();
-  const navigate = useNavigate();
   const { user } = useAuth();
-  const { conversations } = useConversations();
-  const { messages, profiles, loading, sendMessage, deleteMessage, setTyping, typingUserIds } = useMessages(id ?? null);
-  const { startCall } = useCall();
+  const { messages, profiles, sendMessage } = useMessages(id || null);
+  const [text, setText] = useState("");
+  const endRef = useRef<HTMLDivElement>(null);
 
-  const conv = conversations.find((c) => c.id === id);
-  const other = conv?.type === "direct" ? conv.participants.find((p) => p.id !== user?.id) : null;
-
-  const headerName =
-    conv?.type === "group"
-      ? conv.name || "Group"
-      : other?.display_name || other?.username || "Chat";
-
-  const subtitle =
-    conv?.type === "group"
-      ? `${conv.participants.length} members`
-      : other?.is_online
-        ? "Active now"
-        : other
-          ? `Last seen ${formatDistanceToNowStrict(new Date(other.last_seen), { addSuffix: true })}`
-          : "";
-
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const otherProfile = messages.length
+    ? profiles.get(messages.find((m) => m.sender_id !== user?.id)?.sender_id || "")
+    : null;
 
   useEffect(() => {
-    const el = scrollRef.current?.querySelector("[data-radix-scroll-area-viewport]") as HTMLElement | null;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [messages.length, typingUserIds.length]);
+    endRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
 
-  if (!id) return null;
+  const submit = async () => {
+    if (!text.trim()) return;
+    await sendMessage(text);
+    setText("");
+  };
 
-  return (<section className="flex h-full min-w-0 flex-1 flex-col bg-gradient-to-br from-pink-50 via-white to-blue-50"> <header className="flex items-center gap-3 border-b border-gray-200 bg-white/80 backdrop-blur-xl px-5 py-4 shadow-sm">
-    <Button variant="ghost" size="icon" className="md:hidden" onClick={() => navigate("/")}> <ArrowLeft className="h-5 w-5" /> </Button>
-
-    <UserAvatar
-      profile={
-        conv?.type === "group"
-          ? {
-            avatar_url: conv.avatar_url,
-            display_name: conv.name,
-            username: conv.name ?? "g",
-            is_online: false,
-          }
-          : other ?? null
-      }
-      size="md"
-      showStatus={conv?.type === "direct"}
-    />
-
-    <div className="min-w-0 flex-1">
-      <div className="truncate text-sm font-bold text-gray-800">{headerName}</div>
-      <div className="truncate text-xs text-gray-500">{subtitle}</div>
-    </div>
-
-    {conv?.type === "direct" && other && (
-      <div className="flex items-center gap-2">
-        <Button
-          onClick={() => startCall(other, conv.id, "audio")}
-          className="rounded-full bg-gradient-to-r from-pink-500 to-purple-500 text-white shadow-md"
-        >
-          <Phone className="h-4 w-4" />
-        </Button>
-
-        <Button
-          onClick={() => startCall(other, conv.id, "video")}
-          className="rounded-full bg-gradient-to-r from-purple-500 to-blue-500 text-white shadow-md"
-        >
-          <Video className="h-4 w-4" />
-        </Button>
+  return (
+    <div className="flex h-full flex-col bg-gradient-to-br from-pink-50 via-white to-blue-50">
+      
+      {/* TOP HEADER desktop only */}
+      <div className="hidden md:flex items-center gap-3 border-b bg-white px-5 py-4 shadow-sm">
+        <div className="flex h-11 w-11 items-center justify-center rounded-full bg-gradient-to-r from-pink-500 via-purple-500 to-blue-500 font-bold text-white">
+          {(otherProfile?.username || "M").slice(0, 1).toUpperCase()}
+        </div>
+        <div>
+          <div className="font-bold">{otherProfile?.display_name || otherProfile?.username || "MoNo"}</div>
+          <div className="text-xs text-green-500">online</div>
+        </div>
       </div>
-    )}
-  </header>
 
-    <ScrollArea ref={scrollRef} className="flex-1">
-      <div className="mx-auto flex max-w-4xl flex-col gap-2 px-6 py-6">
-        {loading ? (
-          <div className="flex justify-center py-10">
-            <div className="h-6 w-6 animate-spin rounded-full border-2 border-pink-500 border-t-transparent" />
-          </div>
-        ) : messages.length === 0 ? (
-          <div className="py-20 text-center text-sm text-gray-400">
-            Start the conversation 💬
-          </div>
-        ) : (
-          messages.map((m, i) => {
-            const prev = messages[i - 1];
-            const next = messages[i + 1];
-            const isOwn = m.sender_id === user?.id;
-            const sender = profiles.get(m.sender_id);
-            const showAvatar = !next || next.sender_id !== m.sender_id;
-            const showName = !prev || prev.sender_id !== m.sender_id;
-
-            return (
-              <MessageBubble
-                key={m.id}
-                message={m}
-                sender={sender}
-                isOwn={isOwn}
-                showAvatar={showAvatar}
-                showName={showName}
-                isGroup={conv?.type === "group"}
-                onDelete={deleteMessage}
-              />
-            );
-          })
-        )}
-
-        {typingUserIds.length > 0 && (
-          <div className="mt-2 flex items-center gap-2 px-2">
-            <div className="rounded-full bg-white px-4 py-2 shadow">
-              typing...
+      {/* MESSAGES */}
+      <div className="flex-1 overflow-y-auto px-3 py-4 pb-32 md:px-6">
+        {messages.map((m: any) => {
+          const mine = m.sender_id === user?.id;
+          return (
+            <div
+              key={m.id}
+              className={`mb-4 flex ${mine ? "justify-end" : "justify-start"}`}
+            >
+              <div className={`max-w-[78%] ${mine ? "items-end" : "items-start"} flex flex-col`}>
+                <div
+                  className={`rounded-3xl px-4 py-3 text-sm shadow-md ${
+                    mine
+                      ? "bg-gradient-to-r from-pink-500 via-purple-500 to-blue-500 text-white"
+                      : "bg-white text-gray-800"
+                  }`}
+                >
+                  {m.content}
+                </div>
+                <span className="mt-1 px-2 text-[10px] text-gray-400">
+                  {new Date(m.created_at).toLocaleTimeString([], {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })}
+                </span>
+              </div>
             </div>
-          </div>
-        )}
+          );
+        })}
+        <div ref={endRef} />
       </div>
-    </ScrollArea>
 
-    <MessageComposer onSend={sendMessage} onTyping={setTyping} />
-  </section>
+      {/* INPUT BAR */}
+      <div className="fixed bottom-16 left-0 right-0 border-t bg-white/95 px-3 py-3 backdrop-blur-xl md:static md:bottom-0 md:px-5">
+        <div className="flex items-center gap-2">
+          <button className="rounded-full bg-pink-50 p-3">
+            <ImagePlus className="h-5 w-5 text-pink-500" />
+          </button>
 
+          <input
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && submit()}
+            placeholder="Send message..."
+            className="flex-1 rounded-full bg-gray-100 px-5 py-3 text-sm outline-none"
+          />
+
+          <button
+            onClick={submit}
+            className="rounded-full bg-gradient-to-r from-pink-500 via-purple-500 to-blue-500 p-3 text-white shadow-lg"
+          >
+            <SendHorizonal className="h-5 w-5" />
+          </button>
+        </div>
+      </div>
+    </div>
   );
-};
+}
