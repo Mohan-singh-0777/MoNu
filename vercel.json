@@ -1,15 +1,8 @@
 {
-  "routes": [
+  "rewrites": [
     {
-      "src": "/manifest.json",
-      "headers": {
-        "cache-control": "public,max-age=0,must-revalidate"
-      },
-      "dest": "/manifest.json"
-    },
-    {
-      "src": "/(.*)",
-      "dest": "/index.html"
+      "source": "/((?!.*\\.).*)",
+      "destination": "/index.html"
     }
   ]
 }
